@@ -257,6 +257,8 @@
                                   (if (:network docker)
                                     (update docker :network cook-network->mesomatic-network)
                                     docker)))
+                        (update :docker
+                                (clojure.set/rename-keys % {:port-mapping :port-mappings}))
                         (update :volumes
                                 (fn [volumes]
                                   (map #(update % :mode cook-volume-mode->mesomatic-volume-mode)
@@ -299,8 +301,10 @@
   [offers task-data-maps]
   (let [slave-id (-> offers first :slave-id)
         combined-resource-pool (resources-by-role offers)]
-    (->> task-data-maps
-         (add-scalar-resources-to-task-infos combined-resource-pool)
-         (add-ports-to-task-info combined-resource-pool)
-         (map #(assoc % :slave-id slave-id))
-         (map task-info->mesos-message))))
+    (let [res (->> task-data-maps
+                   (add-scalar-resources-to-task-infos combined-resource-pool)
+                   (add-ports-to-task-info combined-resource-pool)
+                   (map #(assoc % :slave-id slave-id))
+                   (map task-info->mesos-message))]
+      (println res)
+      res)))
