@@ -258,7 +258,7 @@
                                     (update docker :network cook-network->mesomatic-network)
                                     docker)))
                         (update :docker
-                                (clojure.set/rename-keys % {:port-mapping :port-mappings}))
+                                #(clojure.set/rename-keys % {:port-mapping :port-mappings}))
                         (update :volumes
                                 (fn [volumes]
                                   (map #(update % :mode cook-volume-mode->mesomatic-volume-mode)

@@ -725,3 +725,16 @@ class CookTest(unittest.TestCase):
         self.assertEqual(resp.status_code, 201)
         job = util.wait_for_job(self.cook_url, job_uuid, 'completed')
         self.assertEqual('success', job['instances'][0]['status'])
+
+    def test_docker_port_mapping(self):
+        job_uuid, resp = util.submit_job(self.cook_url,
+                                         command='python -m http.server 8080',
+                                         ports=1,
+                                         container={'type': 'DOCKER',
+                                                    'docker': {'image': 'python:latest',
+                                                               'network': 'bridge',
+                                                               'port-mapping': [{'host-port': 0,
+                                                                                 'container-port': 8080}]}})
+        self.assertEqual(resp.status_code, 201, resp.content)
+        job = util.wait_for_job(self.cook_url, job_uuid, 'completed')
+        self.assertEqual('success', job['instances'][0]['status'])
