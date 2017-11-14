@@ -72,7 +72,8 @@
   "Transacts the latest aggregated task-id->sandbox to datomic.
    No more than batch-size facts are updated in individual datomic transactions."
   [datomic-conn batch-size task-id->sandbox-agent]
-  (let [task-id->sandbox @task-id->sandbox-agent]
+  (let [task-id->sandbox @task-id->sandbox-agent
+        datomic-db (d/db datomic-conn)]
     (log/info "Publishing" (count task-id->sandbox) "instance sandbox directories")
     (histograms/update! sandbox-updater-pending-entries (count task-id->sandbox))
     (meters/mark! sandbox-updater-publish-rate)
@@ -80,9 +81,11 @@
       sandbox-updater-publish-duration
       (doseq [task-id->sandbox-partition (partition-all batch-size task-id->sandbox)]
         (try
-          (letfn [(build-sandbox-txns [[task-id sandbox]]
-                    [[:db/add [:instance/task-id task-id] :instance/sandbox-directory sandbox]])]
-            (let [txns (mapcat build-sandbox-txns task-id->sandbox-partition)]
+          (letfn [(task-id->instance-eid [task-id]
+                    (:db/id (d/entity datomic-db [:instance/task-id task-id])))
+                  (build-sandbox-txns [[task-id sandbox]]
+                    [:db/add (task-id->instance-eid task-id) :instance/sandbox-directory sandbox])]
+            (let [txns (vec (map build-sandbox-txns task-id->sandbox-partition))]
               (when (seq txns)
                 (log/info "Inserting" (count txns) "facts in sandbox state update")
                 (meters/mark! sandbox-updater-tx-rate)
