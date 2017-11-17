@@ -172,7 +172,7 @@
                       (log/info "Found" (count filtered-task-id->sandbox-directory) "tasks without sandbox directories on"
                                 agent-hostname "after retrieving" (count task-id->sandbox-directory) "tasks")
                       (let [large-task-id->sandbox-directory (->> (@hostname->task-id->sandbox-history agent-hostname)
-                                                                  seq
+                                                                  vec
                                                                   shuffle
                                                                   (take (rand-int max-old-entries))
                                                                   (into filtered-task-id->sandbox-directory))]
