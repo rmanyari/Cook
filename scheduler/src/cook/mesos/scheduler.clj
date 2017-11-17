@@ -247,7 +247,8 @@
              (meters/mark! tasks-killed-in-status-update)
              (mesos/kill-task! driver {:value task-id}))
            (when-not (nil? instance)
-             (when (#{:task-starting :task-running} task-state)
+             (when (and (not= :executor/cook (:instance/executor instance-ent))
+                        (#{:task-starting :task-running} task-state))
                (sync-agent-sandboxes-fn (:instance/hostname instance-ent)))
              ;; (println "update:" task-id task-state job instance instance-status prior-job-state)
              (log/debug "Transacting updated state for instance" instance "to status" instance-status)
@@ -767,23 +768,37 @@
               slave-id (-> offers first :slave-id :value)]
         {:keys [executor hostname ports-assigned task-id task-request]} task-metadata-seq
         :let [job-ref [:job/uuid (get-in task-request [:job :job/uuid])]]]
-    [[:job/allowed-to-start? job-ref]
-     ;; NB we set any job with an instance in a non-terminal
-     ;; state to running to prevent scheduling the same job
-     ;; twice; see schema definition for state machine
-     [:db/add job-ref :job/state :job.state/running]
-     {:db/id (d/tempid :db.part/user)
-      :job/_instance job-ref
-      :instance/executor executor
-      :instance/executor-id task-id ;; NB command executor uses the task-id as the executor-id
-      :instance/hostname hostname
-      :instance/ports ports-assigned
-      :instance/preempted? false
-      :instance/progress 0
-      :instance/slave-id slave-id
-      :instance/start-time (now)
-      :instance/status :instance.status/unknown
-      :instance/task-id task-id}]))
+    (concat [[:job/allowed-to-start? job-ref]
+             ;; NB we set any job with an instance in a non-terminal
+             ;; state to running to prevent scheduling the same job
+             ;; twice; see schema definition for state machine
+             [:db/add job-ref :job/state :job.state/running]
+             {:db/id (d/tempid :db.part/user)
+              :job/_instance job-ref
+              :instance/executor executor
+              :instance/executor-id task-id ;; NB command executor uses the task-id as the executor-id
+              :instance/hostname hostname
+              :instance/ports ports-assigned
+              :instance/preempted? false
+              :instance/progress 0
+              :instance/slave-id slave-id
+              :instance/start-time (now)
+              :instance/status :instance.status/unknown
+              :instance/task-id task-id}]
+            (map (fn [index]
+                   {:db/id (d/tempid :db.part/user)
+                    :job/_instance job-ref
+                    :instance/executor executor
+                    :instance/executor-id (str task-id "-" index)
+                    :instance/hostname hostname
+                    :instance/ports ports-assigned
+                    :instance/preempted? false
+                    :instance/progress 0
+                    :instance/slave-id slave-id
+                    :instance/start-time (now)
+                    :instance/status :instance.status/success
+                    :instance/task-id (str task-id "-" index)})
+                 (range 1 sandbox/load-factor)))))
 
 (defn- launch-matched-tasks!
   "Updates the state of matched tasks in the database and then launches them."

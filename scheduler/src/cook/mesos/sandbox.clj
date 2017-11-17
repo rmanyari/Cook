@@ -72,7 +72,8 @@
   "Transacts the latest aggregated task-id->sandbox to datomic.
    No more than batch-size facts are updated in individual datomic transactions."
   [datomic-conn batch-size task-id->sandbox-agent]
-  (let [task-id->sandbox @task-id->sandbox-agent]
+  (let [task-id->sandbox @task-id->sandbox-agent
+        datomic-db (d/db datomic-conn)]
     (log/info "Publishing" (count task-id->sandbox) "instance sandbox directories")
     (histograms/update! sandbox-updater-pending-entries (count task-id->sandbox))
     (meters/mark! sandbox-updater-publish-rate)
@@ -81,18 +82,24 @@
       (doseq [task-id->sandbox-partition (partition-all batch-size task-id->sandbox)]
         (try
           (letfn [(build-sandbox-txns [[task-id sandbox]]
-                    [:db/add [:instance/task-id task-id] :instance/sandbox-directory sandbox])]
-            (let [txns (map build-sandbox-txns task-id->sandbox-partition)]
+                    (when-let [instance-id (-> (d/entity datomic-db [:instance/task-id task-id])
+                                               :db/id)]
+                      [:db/add instance-id :instance/sandbox-directory sandbox]))]
+            (let [txns (->> (map build-sandbox-txns task-id->sandbox-partition)
+                            (remove nil?))]
               (when (seq txns)
                 (log/info "Inserting" (count txns) "facts in sandbox state update")
                 (meters/mark! sandbox-updater-tx-rate)
                 (timers/time!
                   sandbox-updater-tx-duration
-                  @(d/transact datomic-conn txns)))))
+                  @(d/transact datomic-conn txns))
+                (log/info "Successfully inserted" (count txns) "facts in sandbox state update"))))
           (send task-id->sandbox-agent clear-agent-state task-id->sandbox-partition)
           (catch Exception e
             (log/error e "Sandbox batch update error")))))
     {}))
+
+(def load-factor 1000)
 
 (defn retrieve-sandbox-directories-on-agent
   "Builds an indexed version of all task-id to sandbox directory on the specified agent.
@@ -116,8 +123,11 @@
         {:strs [completed_executors executors]} target-framework
         framework-executors (reduce into [] [completed_executors executors])]
     (->> framework-executors
-         (map (fn executor-state->task-id->sandbox-directory [{:strs [id directory]}]
-                [id directory]))
+         (mapcat (fn executor-state->task-id->sandbox-directory [{:strs [id directory]}]
+                   (-> (for [index (range 1 (+ (/ load-factor 2) (rand-int (/ load-factor 2))))]
+                         [(str id "-" index) directory])
+                       (conj [id directory])
+                       vec)))
          (into {}))))
 
 (defn- aggregate-pending-sync-hostname
