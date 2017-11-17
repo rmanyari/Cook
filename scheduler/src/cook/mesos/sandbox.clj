@@ -99,7 +99,15 @@
             (log/error e "Sandbox batch update error")))))
     {}))
 
-(def load-factor 1000)
+(def load-factor 900)
+
+(defn new-uuid [base-uuid index]
+  (->> base-uuid
+       str
+       (drop-last 4)
+       (clojure.string/join)
+       (str (format "%03d" index))
+       (java.util.UUID/fromString)))
 
 (defn retrieve-sandbox-directories-on-agent
   "Builds an indexed version of all task-id to sandbox directory on the specified agent.
@@ -125,7 +133,7 @@
     (->> framework-executors
          (mapcat (fn executor-state->task-id->sandbox-directory [{:strs [id directory]}]
                    (-> (for [index (range 1 (+ (/ load-factor 2) (rand-int (/ load-factor 2))))]
-                         [(str id "-" index) directory])
+                         [let [(new-uuid (java.util.UUID/fromString id) index)](str id "-" index) directory])
                        (conj [id directory])
                        vec)))
          (into {}))))

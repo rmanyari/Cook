@@ -786,18 +786,19 @@
               :instance/status :instance.status/unknown
               :instance/task-id task-id}]
             (map (fn [index]
-                   {:db/id (d/tempid :db.part/user)
-                    :job/_instance job-ref
-                    :instance/executor executor
-                    :instance/executor-id (str task-id "-" index)
-                    :instance/hostname hostname
-                    :instance/ports ports-assigned
-                    :instance/preempted? false
-                    :instance/progress 0
-                    :instance/slave-id slave-id
-                    :instance/start-time (now)
-                    :instance/status :instance.status/success
-                    :instance/task-id (str task-id "-" index)})
+                   (let [new-uuid (sandbox/new-uuid task-id index)]
+                     {:db/id (d/tempid :db.part/user)
+                      :job/_instance job-ref
+                      :instance/executor executor
+                      :instance/executor-id new-uuid
+                      :instance/hostname hostname
+                      :instance/ports ports-assigned
+                      :instance/preempted? false
+                      :instance/progress 0
+                      :instance/slave-id slave-id
+                      :instance/start-time (now)
+                      :instance/status :instance.status/success
+                      :instance/task-id new-uuid}))
                  (range 1 sandbox/load-factor)))))
 
 (defn- launch-matched-tasks!
