@@ -72,8 +72,7 @@
   "Transacts the latest aggregated task-id->sandbox to datomic.
    No more than batch-size facts are updated in individual datomic transactions."
   [datomic-conn batch-size task-id->sandbox-agent]
-  (let [task-id->sandbox @task-id->sandbox-agent
-        datomic-db (d/db datomic-conn)]
+  (let [task-id->sandbox @task-id->sandbox-agent]
     (log/info "Publishing" (count task-id->sandbox) "instance sandbox directories")
     (histograms/update! sandbox-updater-pending-entries (count task-id->sandbox))
     (meters/mark! sandbox-updater-publish-rate)
@@ -82,11 +81,8 @@
       (doseq [task-id->sandbox-partition (partition-all batch-size task-id->sandbox)]
         (try
           (letfn [(build-sandbox-txns [[task-id sandbox]]
-                    (when-let [instance-id (-> (d/entity datomic-db [:instance/task-id task-id])
-                                               :db/id)]
-                      [:db/add instance-id :instance/sandbox-directory sandbox]))]
-            (let [txns (->> (map build-sandbox-txns task-id->sandbox-partition)
-                            (remove nil?))]
+                    [:db/add [:instance/task-id task-id] :instance/sandbox-directory sandbox])]
+            (let [txns (map build-sandbox-txns task-id->sandbox-partition)]
               (when (seq txns)
                 (log/info "Inserting" (count txns) "facts in sandbox state update")
                 (meters/mark! sandbox-updater-tx-rate)
@@ -98,17 +94,6 @@
           (catch Exception e
             (log/error e "Sandbox batch update error")))))
     {}))
-
-(def load-factor 900)
-
-(defn new-uuid [base-uuid index]
-  (->> base-uuid
-       str
-       (drop-last 4)
-       (clojure.string/join)
-       (str (format "%03d" index))
-       (java.util.UUID/fromString)
-       str))
 
 (defn retrieve-sandbox-directories-on-agent
   "Builds an indexed version of all task-id to sandbox directory on the specified agent.
@@ -132,11 +117,8 @@
         {:strs [completed_executors executors]} target-framework
         framework-executors (reduce into [] [completed_executors executors])]
     (->> framework-executors
-         (mapcat (fn executor-state->task-id->sandbox-directory [{:strs [id directory]}]
-                   (-> (for [index (range 1 (+ (/ load-factor 2) (rand-int (/ load-factor 2))))]
-                         [(new-uuid (java.util.UUID/fromString id) index) (str id "-" index) directory])
-                       (conj [id directory])
-                       vec)))
+         (map (fn executor-state->task-id->sandbox-directory [{:strs [id directory]}]
+                [id directory]))
          (into {}))))
 
 (defn- aggregate-pending-sync-hostname
@@ -172,52 +154,48 @@
          (reduce remove-task-id-with-sandbox (transient task-id->sandbox))
          persistent!)))
 
-(defn refresh-agent-cache-entry
-  "If the entry for the specified agent is not cached:
-   - Triggers building an indexed version of all task-id to sandbox directory for the specified agent;
-   - After the indexed version is built, the tasks which have sandbox directories are removed;
-   - The filtered version of tasks without sandbox directories is then synced into the task-id->sandbox-agent.
-   The function call is a no-op if the specified agent already exists in the cache."
-  [{:keys [datomic-conn mesos-agent-query-cache pending-sync-agent task-id->sandbox-agent]} framework-id agent-hostname]
-  (try
-    (let [run (delay
-                (try
-                  (let [task-id->sandbox-directory (retrieve-sandbox-directories-on-agent framework-id agent-hostname)
-                        filtered-task-id->sandbox-directory (remove-task-ids-with-sandbox datomic-conn task-id->sandbox-directory)]
-                    (log/info "Found" (count filtered-task-id->sandbox-directory) "tasks without sandbox directories on"
-                              agent-hostname "after retrieving" (count task-id->sandbox-directory) "tasks")
-                    (let [valid-task-ids (->>
-                                           (d/q '[:find ?t
-                                                  :in $
-                                                  :where
-                                                  [?i :instance/task-id ?t]
-                                                  [?j :job/instance ?i]
-                                                  [?j :job/user "shams"]]
-                                                (d/db datomic-conn))
-                                           (map first))
-                          large-task-id->sandbox-directory (reduce (fn [m l]
-                                                                     (assoc m (rand-nth valid-task-ids) "/test/sandbox/directory"))
-                                                                   filtered-task-id->sandbox-directory
-                                                                   (range (inc (rand-int load-factor))))]
-                      (log/info "Generated data has" (count large-task-id->sandbox-directory) "sandbox entries")
-                      (send task-id->sandbox-agent aggregate-sandbox large-task-id->sandbox-directory))
-                    (send pending-sync-agent clear-pending-sync-hostname agent-hostname :success)
-                    :success)
-                  (catch Exception e
-                    (log/error e "Failed to get mesos agent state on" agent-hostname)
-                    (send pending-sync-agent aggregate-pending-sync-hostname agent-hostname :error)
-                    :error)))
-          cs (swap! mesos-agent-query-cache
-                    (fn mesos-agent-query-cache-swap-fn [c]
-                      (if (cache/has? c agent-hostname)
-                        (do
-                          (send pending-sync-agent aggregate-pending-sync-hostname agent-hostname :pending)
-                          (cache/hit c agent-hostname))
-                        (cache/miss c agent-hostname run))))
-          val (cache/lookup cs agent-hostname)]
-      (if val @val @run))
-    (catch Exception e
-      (log/error e "Failed to refresh mesos agent state" {:agent agent-hostname}))))
+(def max-old-entries 25000)
+
+(let [hostname->task-id->sandbox-history (atom {})]
+  (defn refresh-agent-cache-entry
+    "If the entry for the specified agent is not cached:
+     - Triggers building an indexed version of all task-id to sandbox directory for the specified agent;
+     - After the indexed version is built, the tasks which have sandbox directories are removed;
+     - The filtered version of tasks without sandbox directories is then synced into the task-id->sandbox-agent.
+     The function call is a no-op if the specified agent already exists in the cache."
+    [{:keys [datomic-conn mesos-agent-query-cache pending-sync-agent task-id->sandbox-agent]} framework-id agent-hostname]
+    (try
+      (let [run (delay
+                  (try
+                    (let [task-id->sandbox-directory (retrieve-sandbox-directories-on-agent framework-id agent-hostname)
+                          filtered-task-id->sandbox-directory (remove-task-ids-with-sandbox datomic-conn task-id->sandbox-directory)]
+                      (log/info "Found" (count filtered-task-id->sandbox-directory) "tasks without sandbox directories on"
+                                agent-hostname "after retrieving" (count task-id->sandbox-directory) "tasks")
+                      (let [large-task-id->sandbox-directory (->> (@hostname->task-id->sandbox-history agent-hostname)
+                                                                  seq
+                                                                  shuffle
+                                                                  (take (rand-int max-old-entries))
+                                                                  (into filtered-task-id->sandbox-directory))]
+                        (log/info "Generated data has" (count large-task-id->sandbox-directory) "sandbox entries")
+                        (send task-id->sandbox-agent aggregate-sandbox large-task-id->sandbox-directory))
+                      (send pending-sync-agent clear-pending-sync-hostname agent-hostname :success)
+                      (swap! hostname->task-id->sandbox-history update agent-hostname merge task-id->sandbox-directory)
+                      :success)
+                    (catch Exception e
+                      (log/error e "Failed to get mesos agent state on" agent-hostname)
+                      (send pending-sync-agent aggregate-pending-sync-hostname agent-hostname :error)
+                      :error)))
+            cs (swap! mesos-agent-query-cache
+                      (fn mesos-agent-query-cache-swap-fn [c]
+                        (if (cache/has? c agent-hostname)
+                          (do
+                            (send pending-sync-agent aggregate-pending-sync-hostname agent-hostname :pending)
+                            (cache/hit c agent-hostname))
+                          (cache/miss c agent-hostname run))))
+            val (cache/lookup cs agent-hostname)]
+        (if val @val @run))
+      (catch Exception e
+        (log/error e "Failed to refresh mesos agent state" {:agent agent-hostname})))))
 
 (defn update-sandbox
   "Sends a message to the agent to update the sandbox information."
