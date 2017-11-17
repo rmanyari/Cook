@@ -32,7 +32,8 @@
             [datomic.api :as d :refer (q db)]
             [mesomatic.scheduler :as msched]
             [mesomatic.types :as mtypes]
-            [plumbing.core :as pc])
+            [plumbing.core :as pc]
+            [cook.test.testutil :as tu])
   (:import (com.netflix.fenzo TaskAssignmentResult TaskScheduler VMTaskFitnessCalculator)
            (com.netflix.fenzo.plugins BinPackingFitnessCalculators)
            (java.util UUID)
@@ -2046,6 +2047,24 @@
           (finally
             (publisher-cancel-fn)
             (syncer-cancel-fn)))))))
+
+(deftest test-xyz
+  (let [db-conn (restore-fresh-database! "datomic:mem://test-xyz")]
+    (tu/create-dummy-instance db-conn (tu/create-dummy-job db-conn))
+    (tu/create-dummy-instance db-conn (tu/create-dummy-job db-conn))
+    (tu/create-dummy-instance db-conn (tu/create-dummy-job db-conn))
+
+    (println
+      (->>
+        (d/q '[:find ?t
+               :in $
+               :where
+               [?i :instance/task-id ?t]
+               [?j :job/instance ?i]
+               [?j :job/user "shamsimam"]]
+             (d/db db-conn))
+        (map first)
+        (rand-nth)))))
 
 (comment
   (run-tests))

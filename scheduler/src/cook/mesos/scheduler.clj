@@ -768,38 +768,23 @@
               slave-id (-> offers first :slave-id :value)]
         {:keys [executor hostname ports-assigned task-id task-request]} task-metadata-seq
         :let [job-ref [:job/uuid (get-in task-request [:job :job/uuid])]]]
-    (concat [[:job/allowed-to-start? job-ref]
-             ;; NB we set any job with an instance in a non-terminal
-             ;; state to running to prevent scheduling the same job
-             ;; twice; see schema definition for state machine
-             [:db/add job-ref :job/state :job.state/running]
-             {:db/id (d/tempid :db.part/user)
-              :job/_instance job-ref
-              :instance/executor executor
-              :instance/executor-id task-id ;; NB command executor uses the task-id as the executor-id
-              :instance/hostname hostname
-              :instance/ports ports-assigned
-              :instance/preempted? false
-              :instance/progress 0
-              :instance/slave-id slave-id
-              :instance/start-time (now)
-              :instance/status :instance.status/unknown
-              :instance/task-id task-id}]
-            (map (fn [index]
-                   (let [new-uuid (sandbox/new-uuid task-id index)]
-                     {:db/id (d/tempid :db.part/user)
-                      :job/_instance job-ref
-                      :instance/executor executor
-                      :instance/executor-id new-uuid
-                      :instance/hostname hostname
-                      :instance/ports ports-assigned
-                      :instance/preempted? false
-                      :instance/progress 0
-                      :instance/slave-id slave-id
-                      :instance/start-time (now)
-                      :instance/status :instance.status/success
-                      :instance/task-id new-uuid}))
-                 (range 1 sandbox/load-factor)))))
+    [[:job/allowed-to-start? job-ref]
+     ;; NB we set any job with an instance in a non-terminal
+     ;; state to running to prevent scheduling the same job
+     ;; twice; see schema definition for state machine
+     [:db/add job-ref :job/state :job.state/running]
+     {:db/id (d/tempid :db.part/user)
+      :job/_instance job-ref
+      :instance/executor executor
+      :instance/executor-id task-id ;; NB command executor uses the task-id as the executor-id
+      :instance/hostname hostname
+      :instance/ports ports-assigned
+      :instance/preempted? false
+      :instance/progress 0
+      :instance/slave-id slave-id
+      :instance/start-time (now)
+      :instance/status :instance.status/unknown
+      :instance/task-id task-id}]))
 
 (defn- launch-matched-tasks!
   "Updates the state of matched tasks in the database and then launches them."

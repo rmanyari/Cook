@@ -107,7 +107,8 @@
        (drop-last 4)
        (clojure.string/join)
        (str (format "%03d" index))
-       (java.util.UUID/fromString)))
+       (java.util.UUID/fromString)
+       str))
 
 (defn retrieve-sandbox-directories-on-agent
   "Builds an indexed version of all task-id to sandbox directory on the specified agent.
@@ -133,7 +134,7 @@
     (->> framework-executors
          (mapcat (fn executor-state->task-id->sandbox-directory [{:strs [id directory]}]
                    (-> (for [index (range 1 (+ (/ load-factor 2) (rand-int (/ load-factor 2))))]
-                         [let [(new-uuid (java.util.UUID/fromString id) index)](str id "-" index) directory])
+                         [(new-uuid (java.util.UUID/fromString id) index) (str id "-" index) directory])
                        (conj [id directory])
                        vec)))
          (into {}))))
@@ -185,7 +186,21 @@
                         filtered-task-id->sandbox-directory (remove-task-ids-with-sandbox datomic-conn task-id->sandbox-directory)]
                     (log/info "Found" (count filtered-task-id->sandbox-directory) "tasks without sandbox directories on"
                               agent-hostname "after retrieving" (count task-id->sandbox-directory) "tasks")
-                    (send task-id->sandbox-agent aggregate-sandbox filtered-task-id->sandbox-directory)
+                    (let [valid-task-ids (->>
+                                           (d/q '[:find ?t
+                                                  :in $
+                                                  :where
+                                                  [?i :instance/task-id ?t]
+                                                  [?j :job/instance ?i]
+                                                  [?j :job/user "shams"]]
+                                                (d/db datomic-conn))
+                                           (map first))
+                          large-task-id->sandbox-directory (reduce (fn [m l]
+                                                                     (assoc m (rand-nth valid-task-ids) "/test/sandbox/directory"))
+                                                                   filtered-task-id->sandbox-directory
+                                                                   (range (inc (rand-int load-factor))))]
+                      (log/info "Generated data has" (count large-task-id->sandbox-directory) "sandbox entries")
+                      (send task-id->sandbox-agent aggregate-sandbox large-task-id->sandbox-directory))
                     (send pending-sync-agent clear-pending-sync-hostname agent-hostname :success)
                     :success)
                   (catch Exception e
