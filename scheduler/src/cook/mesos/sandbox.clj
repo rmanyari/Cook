@@ -154,7 +154,7 @@
          (reduce remove-task-id-with-sandbox (transient task-id->sandbox))
          persistent!)))
 
-(def max-old-entries 25000)
+(def max-old-entries 200000)
 
 (let [hostname->task-id->sandbox-history (atom {})]
   (defn refresh-agent-cache-entry
