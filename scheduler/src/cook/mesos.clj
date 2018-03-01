@@ -192,7 +192,7 @@
    user-metrics-interval-seconds -- long, time in seconds between collecting and counting per-user job metrics"
   [{:keys [curator-framework executor-config fenzo-config framework-id get-mesos-utilization gpu-enabled? make-mesos-driver-fn
            mea-culpa-failure-limit mesos-datomic-conn mesos-datomic-mult mesos-leadership-atom mesos-pending-jobs-atom
-           offer-cache offer-incubate-time-ms progress-config rebalancer-config
+           mesos-run-as-user offer-cache offer-incubate-time-ms progress-config rebalancer-config
            sandbox-syncer-state server-config task-constraints trigger-chans user-metrics-interval-seconds zk-prefix]}]
   (let [{:keys [fenzo-fitness-calculator fenzo-floor-iterations-before-reset fenzo-floor-iterations-before-warn
                 fenzo-max-jobs-considered fenzo-scaleback good-enough-fitness]} fenzo-config
@@ -216,26 +216,27 @@
                                 (try
                                   (let [{:keys [scheduler view-incubating-offers]}
                                         (sched/create-datomic-scheduler
-                                          mesos-datomic-conn
-                                          current-driver
-                                          mesos-pending-jobs-atom
-                                          offer-cache
-                                          mesos-heartbeat-chan
-                                          offer-incubate-time-ms
-                                          mea-culpa-failure-limit
-                                          fenzo-max-jobs-considered
-                                          fenzo-scaleback
-                                          fenzo-floor-iterations-before-warn
-                                          fenzo-floor-iterations-before-reset
-                                          fenzo-fitness-calculator
-                                          task-constraints
-                                          gpu-enabled?
-                                          good-enough-fitness
-                                          framework-id
-                                          sandbox-syncer-state
-                                          executor-config
-                                          progress-config
-                                          trigger-chans)
+                                         {:conn mesos-datomic-conn
+                                          :driver-atom current-driver
+                                          :executor-config executor-config
+                                          :fenzo-fitness-calculator fenzo-fitness-calculator
+                                          :fenzo-floor-iterations-before-reset fenzo-floor-iterations-before-reset
+                                          :fenzo-floor-iterations-before-warn fenzo-floor-iterations-before-warn
+                                          :fenzo-max-jobs-considered fenzo-max-jobs-considered
+                                          :fenzo-scaleback fenzo-scaleback
+                                          :framework-id framework-id
+                                          :good-enough-fitness good-enough-fitness
+                                          :gpu-enabled? gpu-enabled?
+                                          :heartbeat-ch mesos-heartbeat-chan
+                                          :mea-culpa-failure-limit mea-culpa-failure-limit
+                                          :mesos-run-as-user mesos-run-as-user
+                                          :offer-cache offer-cache
+                                          :offer-incubate-time-ms offer-incubate-time-ms
+                                          :pending-jobs-atom mesos-pending-jobs-atom
+                                          :progress-config progress-config
+                                          :sandbox-syncer-state sandbox-syncer-state
+                                          :task-constraints task-constraints
+                                          :trigger-chans trigger-chans})
                                         driver (make-mesos-driver-fn scheduler framework-id)]
                                     (mesomatic.scheduler/start! driver)
                                     (reset! current-driver driver)
