@@ -206,7 +206,7 @@
 (defn handle-status-update
   "Takes a status update from mesos."
   [conn driver pool->fenzo sync-agent-sandboxes-fn status]
-  (log/info "Mesos status is:" status)
+  (log/debug "Mesos status is:" status)
   (timers/time!
     handle-status-update-duration
     (try (let [db (db conn)

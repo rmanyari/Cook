@@ -476,9 +476,8 @@
                            {:running-tasks-ents (count cook-tasks)
                             :tasks-in-mesos (count mesos-tasks)
                             :cook-minus-mesos (count (clojure.set/difference cook-tasks mesos-tasks))
-                            :mesos-minus-cook (count (clojure.set/difference mesos-tasks cook-tasks))})
-                        )
-            (log/info "Completion statuses sent")
+                            :mesos-minus-cook (count (clojure.set/difference mesos-tasks cook-tasks))}))
+            (log/info "Completion statuses sent, tasks in mesos:"  (count (:task-id->task @state-atom)))
 
             ;; Request rank occurs
             (log/info "Starting rank")
