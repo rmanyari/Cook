@@ -235,7 +235,7 @@
         remaining (get complete?->pairs false)
         to-complete-task-ids (map second to-complete-pairs)
         state' (reduce #(complete-task! %1 %2 scheduler driver) state to-complete-task-ids)]
-    (log/debug "Completing" to-complete-pairs)
+    (log/info "Completed" (count to-complete-pairs) "tasks")
     (-> state'
         (assoc :time-task-id-pairs remaining))))
 
@@ -309,7 +309,7 @@
                        (mesos-type/->pb :TaskStatus
                                         {:task-id {:value (:value (:task-id task))}
                                          :state :task-running})))
-      (log/debug "Launching tasks " {:tasks tasks})
+      (log/debug "Launching tasks" {:tasks tasks})
       (-> state
           (update :task-id->task #(into % (map-from-vals (comp :value :task-id) tasks)))
           (update :time-task-id-pairs #(into % new-time-task-id-pairs))
@@ -431,14 +431,13 @@
                  (condp = ch
                    exit-chan nil
                    action-chan (let [[action data] v
-                                     _ (log/debug "Handling action" {:action action :data data})
                                      state' (handle-action! action data state driver scheduler)]
-                                 (log/trace {:action action :data data :state' state'})
                                  state')
                    offer-trigger-chan (let [[new-offers state'] (prepare-new-offers state)]
-                                        (log/debug "Sending offers" {:offers new-offers})
+                                        (log/info "Sending offers" (count new-offers))
                                         (when (seq new-offers)
                                           (.resourceOffers scheduler driver (mapv (partial mesos-type/->pb :Offer) new-offers)))
+                                        (log/info "Sent all offers")
                                         (util/close-when-ch! v)
                                         state')
                    complete-trigger-chan (let [state' (complete-tasks! (assoc state :now (t/now)) scheduler driver)]

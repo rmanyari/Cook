@@ -720,17 +720,19 @@
 (defn launch-matched-tasks!
   "Updates the state of matched tasks in the database and then launches them."
   [matches conn db driver fenzo framework-id mesos-run-as-user pool-name]
+  (log/info "Computing matches")
   (let [matches (map #(update-match-with-task-metadata-seq % db framework-id mesos-run-as-user) matches)
-        task-txns (matches->task-txns matches)]
+        task-txns (reduce into [] (matches->task-txns matches))]
     ;; Note that this transaction can fail if a job was scheduled
     ;; during a race. If that happens, then other jobs that should
     ;; be scheduled will not be eligible for rescheduling until
     ;; the pending-jobs atom is repopulated
+    (log/info "Updating" (count task-txns) "datoms and" (count matches) "matches in datomic")
     (timers/time!
       (timers/timer (metric-title "handle-resource-offer!-transact-task-duration" pool-name))
       (datomic/transact
         conn
-        (reduce into [] task-txns)
+        task-txns
         (fn [e]
           (log/warn e
                     "Transaction timed out, so these tasks might be present"
@@ -760,7 +762,8 @@
           (locking fenzo
             (.. fenzo
                 (getTaskAssigner)
-                (call task-request hostname))))))))
+                (call task-request hostname))))))
+    (log/info "Launched" (count task-txns) "tasks")))
 
 (defn update-host-reservations!
   "Updates the rebalancer-reservation-atom with the result of the match cycle.
@@ -794,17 +797,21 @@
               {:keys [matches failures]} (timers/time!
                                            (timers/timer (metric-title "handle-resource-offer!-match-duration" pool-name))
                                            (match-offer-to-schedule db fenzo considerable-jobs offers rebalancer-reservation-atom))
-              _ (log/debug "In" pool-name "pool, got matches:" matches)
+              _ (log/info "In" pool-name "pool, got" (count matches) "matches")
               offers-scheduled (for [{:keys [leases]} matches
                                      lease leases]
                                  (:offer lease))
               matched-job-uuids (timers/time!
                                   (timers/timer (metric-title "handle-resource-offer!-match-job-uuids-duration" pool-name))
                                   (matches->job-uuids matches pool-name))
+              _ (log/info "Computed matched job uuids")
               first-considerable-job-resources (-> considerable-jobs first util/job-ent->resources)
+              _ (log/info "Computed job resources")
               matched-considerable-jobs-head? (contains? matched-job-uuids (-> considerable-jobs first :job/uuid))]
 
+          (log/info "Recording placement failures in fenzo")
           (fenzo/record-placement-failures! conn failures)
+          (log/info "Recorded placement failures in fenzo")
 
           (reset! offer-stash offers-scheduled)
           (reset! front-of-job-queue-mem-atom (or (:mem first-considerable-job-resources) 0))
@@ -841,7 +848,7 @@
                          {:hostname (.hostname lease)
                           :slave-id (.getVMID lease)
                           :resources (.getScalarValues lease)})]
-    (log/debug "We have" (count pending-offers) "pending offers")
+    (log/info "We have" (count pending-offers) "pending offers")
     pending-offers))
 
 (def fenzo-num-considerable-atom (atom 0))
@@ -852,14 +859,14 @@
 
 (defn make-offer-handler
   [conn driver-atom fenzo framework-id pending-jobs-atom agent-attributes-cache max-considerable scaleback
-   floor-iterations-before-warn floor-iterations-before-reset trigger-chan rebalancer-reservation-atom
+   floor-iterations-before-warn floor-iterations-before-reset match-trigger-chan rebalancer-reservation-atom
    mesos-run-as-user pool-name pool-name->optimizer-suggested-job-ids-atom]
   (let [chan-length 100
         offers-chan (async/chan (async/buffer chan-length))
         resources-atom (atom (view-incubating-offers fenzo))]
     (reset! fenzo-num-considerable-atom max-considerable)
     (util/chime-at-ch
-      trigger-chan
+      match-trigger-chan
       (fn match-jobs-event []
         (let [num-considerable @fenzo-num-considerable-atom
               next-considerable
@@ -897,7 +904,7 @@
                                                           (if (cache/has? c slave-id)
                                                             (cache/hit c slave-id)
                                                             (cache/miss c slave-id attrs)))))
-                      _ (log/debug "In" pool-name "pool, passing following offers to handle-resource-offers!" offers)
+                      _ (log/info "In" pool-name "pool, passing" (count offers) "offers to handle-resource-offers!")
                       using-pools? (not (nil? (config/default-pool)))
                       user->quota (quota/create-user->quota-fn (d/db conn) (if using-pools? pool-name nil))
                       matched-head? (handle-resource-offers! conn @driver-atom fenzo framework-id pending-jobs-atom
@@ -918,8 +925,7 @@
                       (log/info "Failed to match head, reducing number of considerable jobs" {:prev-considerable num-considerable
                                                                                               :new-considerable new-considerable
                                                                                               :pool pool-name})
-                      new-considerable)
-                    ))
+                      new-considerable)))
                 (catch Exception e
                   (log/error e "Offer handler encountered exception; continuing")
                   max-considerable))]
@@ -1392,6 +1398,7 @@
 
 (defn receive-offers
   [offers-chan match-trigger-chan driver pool-name offers]
+  (log/info "Received" (count offers) "offers in pool" pool-name)
   (doseq [offer offers]
     (histograms/update! (histograms/histogram (metric-title "offer-size-cpus" pool-name)) (get-in offer [:resources :cpus] 0))
     (histograms/update! (histograms/histogram (metric-title "offer-size-mem" pool-name)) (get-in offer [:resources :mem] 0)))

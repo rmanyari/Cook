@@ -313,7 +313,7 @@
         offer-trigger-chan (async/chan)
         complete-trigger-chan (async/chan)
         ranker-trigger-chan (async/chan)
-        matcher-trigger-chan (async/chan)
+        match-trigger-chan (async/chan)
         rebalancer-trigger-chan (async/chan)
         optimizer-trigger-chan (async/chan)
         state-atom (atom {})
@@ -360,7 +360,7 @@
         scheduler-config (util/deep-merge
                            {:optimizer-config optimizer-config}
                            {:trigger-chans {:rank-trigger-chan ranker-trigger-chan
-                                            :match-trigger-chan matcher-trigger-chan
+                                            :match-trigger-chan match-trigger-chan
                                             :rebalancer-trigger-chan rebalancer-trigger-chan
                                             :optimizer-trigger-chan optimizer-trigger-chan
                                             ;; Don't care about these yet
@@ -497,9 +497,11 @@
             (DateTimeUtils/setCurrentMillisFixed (inc (.getTime (tc/to-date (t/now)))))
             (async/>!! offer-trigger-chan send-offers-complete-chan)
             (async/<!! send-offers-complete-chan)
-            (async/>!! matcher-trigger-chan match-complete-chan)
-            (async/<!! match-complete-chan)
-            ;; Ensure the launch has been processed by mesos
+            (do
+              (log/info "Sending match trigger")
+              (async/>!! match-trigger-chan match-complete-chan)
+              (async/<!! match-complete-chan))
+            (log/info "Ensure the launch has been processed by mesos")
             (poll-until #(every? :instance/mesos-start-time
                                  (util/get-running-task-ents (d/db mesos-datomic-conn)))
                         50
