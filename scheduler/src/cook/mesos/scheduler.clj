@@ -634,29 +634,22 @@
    Further limit the considerable jobs to a maximum of num-considerable jobs."
   [db pending-jobs user->quota user->usage num-considerable pool-name->optimizer-suggested-job-ids-atom pool-name]
   (log/debug "In" pool-name "pool, there are" (count pending-jobs) "pending jobs:" pending-jobs)
-  (let [optimizer-schedule-job-ids-promise (promise)]
-    (swap! pool-name->optimizer-suggested-job-ids-atom
-           (fn [pool-name->optimizer-schedule-job-ids]
-             (->> (pool-name->optimizer-schedule-job-ids pool-name)
-                  (deliver optimizer-schedule-job-ids-promise))
-             ;; TODO determine whether we should be clearing out optimizer data after one use?
-             (assoc pool-name->optimizer-schedule-job-ids pool-name [])))
-    (->> (if-let [optimizer-schedule-job-ids (seq @optimizer-schedule-job-ids-promise)]
-           (let [optimizer-schedule-job-ids-set (into #{} optimizer-schedule-job-ids)
-                 optimizer-approved? (fn optimizer-approved? [job]
-                                       (contains? optimizer-schedule-job-ids-set (:job/uuid job)))]
-             (concat
-               (let [job-id->optimizer-schedule-jobs (->> (filter optimizer-approved? pending-jobs)
-                                                          (pc/map-from-vals :job/uuid))
-                     optimizer-schedule-jobs (->> (map job-id->optimizer-schedule-jobs optimizer-schedule-job-ids)
-                                                  (remove nil?))]
-                 (log/info "In" pool-name "pool, using" (count optimizer-schedule-jobs) "optimizer schedule jobs")
-                 optimizer-schedule-jobs)
-               (remove optimizer-approved? pending-jobs)))
-           pending-jobs)
-         (filter-based-on-quota user->quota user->usage)
-         (filter (fn [job] (util/job-allowed-to-start? db job)))
-         (take num-considerable))))
+  (->> (if-let [optimizer-schedule-job-ids (seq (get @pool-name->optimizer-suggested-job-ids-atom pool-name))]
+         (let [optimizer-schedule-job-ids-set (into #{} optimizer-schedule-job-ids)
+               optimizer-approved? (fn optimizer-approved? [job]
+                                     (contains? optimizer-schedule-job-ids-set (:job/uuid job)))]
+           (concat
+             (let [job-id->optimizer-schedule-jobs (->> (filter optimizer-approved? pending-jobs)
+                                                        (pc/map-from-vals :job/uuid))
+                   optimizer-schedule-jobs (->> (map job-id->optimizer-schedule-jobs optimizer-schedule-job-ids)
+                                                (remove nil?))]
+               (log/info "In" pool-name "pool, using" (count optimizer-schedule-jobs) "optimizer schedule jobs")
+               optimizer-schedule-jobs)
+             (remove optimizer-approved? pending-jobs)))
+         pending-jobs)
+       (filter-based-on-quota user->quota user->usage)
+       (filter (fn [job] (util/job-allowed-to-start? db job)))
+       (take num-considerable)))
 
 (defn matches->job-uuids
   "Returns the matched job uuids."
